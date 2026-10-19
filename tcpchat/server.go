@@ -127,8 +127,11 @@ func (s *Server) publish(client *Client, text string) {
 	s.history = append(s.history, message)
 
 	for other := range s.clients {
-		if other != client {
-			other.sendWithPrompt(message)
-		}
-	}
+    if other == client {
+        other.send("\n" + message)
+    } else {
+
+        other.sendWithPrompt(message)
+    }
+}
 }
