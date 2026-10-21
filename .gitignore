@@ -1,0 +1,15 @@
+# Generated executables (build these locally with go build)
+/TCPChat
+/TCPChat.exe
+/chat-server.exe
+*.exe
+
+# Go test and coverage output
+*.test
+*.out
+coverage.txt
+
+# Editor and operating system files
+.vscode/
+.DS_Store
+Thumbs.db

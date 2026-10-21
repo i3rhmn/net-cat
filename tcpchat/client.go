@@ -20,16 +20,15 @@ func (s *Server) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
 	scanner := bufio.NewScanner(conn)
-
 	if _, err := fmt.Fprint(conn, welcomeMessage); err != nil {
 		return
 	}
 
 	client := &Client{conn: conn}
 
+	// Keep asking until the client chooses an available, nonempty name.
 	for scanner.Scan() {
 		name := strings.TrimSpace(scanner.Text())
-
 		if name == "" {
 			if _, err := fmt.Fprint(conn, "[ENTER YOUR NAME]: "); err != nil {
 				return
@@ -38,49 +37,69 @@ func (s *Server) handleConnection(conn net.Conn) {
 		}
 
 		client.name = name
-
-		if err := s.join(client); err != nil {
+		joined, err := s.join(client)
+		if err != nil {
 			return
+		}
+		if !joined {
+			if _, err := fmt.Fprint(conn, "Username already taken. Please choose another name.\n[ENTER YOUR NAME]: "); err != nil {
+				return
+			}
+			continue
 		}
 
 		defer s.leave(client)
-
-		for scanner.Scan() {
-			text := scanner.Text()
-
-			if strings.TrimSpace(text) != "" {
-				s.publish(client, text)
-			}
-
-			if err := client.send(client.prompt()); err != nil {
-				return
-			}
-		}
-
+		s.chatLoop(client, scanner)
 		return
 	}
 }
 
-func (c *Client) prompt() string {
-	return fmt.Sprintf(
-		"[%s][%s]:",
-		time.Now().Format("2006-01-02 15:04:05"),
-		c.name,
-	)
+func (s *Server) chatLoop(client *Client, scanner *bufio.Scanner) {
+	for scanner.Scan() {
+		text := scanner.Text()
+
+		if strings.TrimSpace(text) == "" {
+			if err := client.send(client.prompt()); err != nil {
+				return
+			}
+			continue
+		}
+
+		// A command is not stored as a normal chat message.
+		if text == "/name" || strings.HasPrefix(text, "/name ") {
+			newName := strings.TrimSpace(strings.TrimPrefix(text, "/name"))
+			response := s.rename(client, newName)
+			if err := client.send("\n" + response + client.prompt()); err != nil {
+				return
+			}
+			continue
+		}
+
+		if err := s.publish(client, text); err != nil {
+			return
+		}
+		if err := client.send(client.prompt()); err != nil {
+			return
+		}
+	}
 }
 
+func (c *Client) prompt() string {
+	return fmt.Sprintf("[%s][%s]:", time.Now().Format("2006-01-02 15:04:05"), c.name)
+}
+
+// send protects writes to this client's connection and bounds slow writes.
 func (c *Client) send(message string) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 
+	if err := c.conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+		return err
+	}
 	_, err := fmt.Fprint(c.conn, message)
 	return err
 }
 
-// Caller holds Server.mu. This method only locks the recipient's writer.
-func (c *Client) sendWithPrompt(message string) {
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
-
-	fmt.Fprint(c.conn, "\n", message, c.prompt())
+func (c *Client) sendWithPrompt(message string) error {
+	return c.send("\n" + message + c.prompt())
 }
